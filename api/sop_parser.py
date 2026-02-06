@@ -117,14 +117,29 @@ class SOPParser:
 
         matches = list(section_pattern.finditer(text))
 
-        for i, match in enumerate(matches):
+        # Filter to only major sections (ALL CAPS or mostly uppercase titles)
+        major_sections = []
+        for match in matches:
             section_number = match.group(1)
             title = match.group(2).strip()
 
-            # Get content between this section and the next
+            # Only include if:
+            # 1. Title is mostly uppercase (ALL CAPS section headings)
+            # 2. OR title length > 15 chars and > 70% uppercase
+            # 3. OR section number is single digit (top-level sections like "1.", "2.")
+
+            uppercase_ratio = sum(1 for c in title if c.isupper()) / max(len(title.replace(' ', '')), 1)
+            is_all_caps = uppercase_ratio > 0.7 and len(title) > 5
+            is_top_level = '.' not in section_number  # Single digit like "1", "2", not "1.1"
+
+            if is_all_caps or (is_top_level and len(title) > 10):
+                major_sections.append((match, section_number, title))
+
+        for i, (match, section_number, title) in enumerate(major_sections):
+            # Get content between this section and the next major section
             start_pos = match.end()
-            if i + 1 < len(matches):
-                end_pos = matches[i + 1].start()
+            if i + 1 < len(major_sections):
+                end_pos = major_sections[i + 1][0].start()
             else:
                 end_pos = len(text)
 
