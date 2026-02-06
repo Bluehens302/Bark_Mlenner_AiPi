@@ -15,7 +15,7 @@
 
 const CONFIG = {
   // Replace with your deployed API URL
-  API_BASE_URL: 'https://your-api-url.com',
+  API_BASE_URL: 'https://bark-mlenner-aipi-1.onrender.com',
 
   // Document metadata keys
   METADATA_KEYS: {
@@ -24,8 +24,60 @@ const CONFIG = {
     START_DATE: 'start_date',
     RESULTS_HISTORY: 'results_history',
     SECTIONS_COMPLETED: 'sections_completed'
-  }
+  },
+
+  // Retry settings for cold starts
+  MAX_RETRIES: 3,
+  RETRY_DELAY_MS: 2000  // 2 seconds between retries
 };
+
+// ============================================================================
+// API HELPER WITH RETRY LOGIC
+// ============================================================================
+
+/**
+ * Fetch from API with retry logic for cold starts
+ * @param {string} url - The URL to fetch
+ * @param {Object} options - Fetch options
+ * @returns {HTTPResponse} - The response
+ */
+function fetchWithRetry(url, options = {}) {
+  options.muteHttpExceptions = true;
+
+  for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
+    try {
+      const response = UrlFetchApp.fetch(url, options);
+      const responseCode = response.getResponseCode();
+
+      // Success
+      if (responseCode >= 200 && responseCode < 300) {
+        return response;
+      }
+
+      // Server errors (502, 503, 504) - might be cold start
+      if (responseCode >= 502 && responseCode <= 504) {
+        if (attempt < CONFIG.MAX_RETRIES) {
+          Logger.log(`Attempt ${attempt} failed with ${responseCode}, retrying in ${CONFIG.RETRY_DELAY_MS}ms...`);
+          Utilities.sleep(CONFIG.RETRY_DELAY_MS);
+          continue;
+        }
+      }
+
+      // Other errors - don't retry
+      throw new Error(`HTTP ${responseCode}: ${response.getContentText()}`);
+
+    } catch (e) {
+      if (attempt < CONFIG.MAX_RETRIES && (e.message.includes('502') || e.message.includes('503') || e.message.includes('504'))) {
+        Logger.log(`Attempt ${attempt} failed: ${e.message}, retrying...`);
+        Utilities.sleep(CONFIG.RETRY_DELAY_MS);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw new Error('API request failed after ' + CONFIG.MAX_RETRIES + ' attempts. Server may be starting up (cold start).');
+}
 
 // ============================================================================
 // MENU FUNCTIONS
@@ -45,7 +97,27 @@ function onOpen() {
     .addItem('📊 View Progress', 'viewProgress')
     .addItem('🔍 Search SOPs', 'searchSOPs')
     .addItem('🔄 Refresh View', 'refreshDocument')
+    .addSeparator()
+    .addItem('⚡ Wake Up API', 'wakeUpAPI')
     .addToUi();
+}
+
+/**
+ * Wake up the API (useful for Render free tier cold starts)
+ */
+function wakeUpAPI() {
+  const ui = DocumentApp.getUi();
+
+  ui.alert('Waking up API...', 'Please wait 10-20 seconds...', ui.ButtonSet.OK);
+
+  try {
+    const response = fetchWithRetry(`${CONFIG.API_BASE_URL}/`);
+    const data = JSON.parse(response.getContentText());
+
+    ui.alert('API is Ready!', `Connected to: ${data.message}\nVersion: ${data.version}`, ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert('Wake Up Failed', `Could not connect to API: ${e.message}`, ui.ButtonSet.OK);
+  }
 }
 
 // ============================================================================
@@ -60,7 +132,7 @@ function browseSOPs() {
 
   try {
     // Fetch list of SOPs from API
-    const response = UrlFetchApp.fetch(`${CONFIG.API_BASE_URL}/sops/list`);
+    const response = fetchWithRetry(`${CONFIG.API_BASE_URL}/sops/list`);
     const data = JSON.parse(response.getContentText());
 
     if (data.count === 0) {
@@ -102,7 +174,7 @@ function browseSections(sopId, sopFilename) {
   try {
     // Fetch sections from API
     const url = `${CONFIG.API_BASE_URL}/sops/${encodeURIComponent(sopId)}/sections`;
-    const response = UrlFetchApp.fetch(url);
+    const response = fetchWithRetry(url);
     const data = JSON.parse(response.getContentText());
 
     if (data.count === 0) {
@@ -153,7 +225,7 @@ function loadAndDisplaySection(sopId, sectionNumber, sopFilename) {
   try {
     // Fetch full section content from API
     const url = `${CONFIG.API_BASE_URL}/sops/${encodeURIComponent(sopId)}/sections/${encodeURIComponent(sectionNumber)}`;
-    const response = UrlFetchApp.fetch(url);
+    const response = fetchWithRetry(url);
     const section = JSON.parse(response.getContentText());
 
     // Save current section to document properties
@@ -262,7 +334,7 @@ function searchSOPs() {
 
   try {
     const url = `${CONFIG.API_BASE_URL}/sops/search?q=${encodeURIComponent(query)}`;
-    const apiResponse = UrlFetchApp.fetch(url);
+    const apiResponse = fetchWithRetry(url);
     const data = JSON.parse(apiResponse.getContentText());
 
     if (data.count === 0) {
@@ -324,7 +396,7 @@ function viewCurrentSection() {
 
   try {
     const url = `${CONFIG.API_BASE_URL}/sops/${encodeURIComponent(sopId)}/sections/${encodeURIComponent(sectionNumber)}`;
-    const response = UrlFetchApp.fetch(url);
+    const response = fetchWithRetry(url);
     const section = JSON.parse(response.getContentText());
 
     displaySection(section, sopId);
@@ -438,7 +510,7 @@ function runPCRCalculation() {
   };
 
   try {
-    const response = UrlFetchApp.fetch(`${CONFIG.API_BASE_URL}/pcr/annealing-temp`, options);
+    const response = fetchWithRetry(`${CONFIG.API_BASE_URL}/pcr/annealing-temp`, options);
     const result = JSON.parse(response.getContentText());
 
     insertCalculationResult('PCR Annealing Temperature', {
