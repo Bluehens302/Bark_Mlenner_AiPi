@@ -2,7 +2,7 @@
 Molecular Biology Tools API
 Backend API for Google Docs integration
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -20,6 +20,9 @@ from molecular_biology_tools import (
     annealing_calculator
 )
 
+# Import SOP parser
+from sop_parser import SOPParser
+
 app = FastAPI(
     title="Molecular Biology Tools API",
     description="API for molecular biology calculations",
@@ -34,6 +37,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize SOP Parser
+sops_directory = os.path.join(os.path.dirname(__file__), '..', 'sops')
+sop_parser = SOPParser(sops_directory)
 
 # Request/Response Models
 class PrimerPair(BaseModel):
@@ -80,13 +87,22 @@ async def root():
     return {
         "message": "Molecular Biology Tools API",
         "version": "1.0.0",
-        "endpoints": [
-            "/pcr/annealing-temp",
-            "/gibson/calculate",
-            "/restriction/digest",
-            "/ligation/insert-vector-ratio",
-            "/oligo/annealing"
-        ]
+        "endpoints": {
+            "calculations": [
+                "/pcr/annealing-temp",
+                "/gibson/calculate",
+                "/restriction/digest",
+                "/ligation/insert-vector-ratio",
+                "/oligo/annealing"
+            ],
+            "sops": [
+                "/sops/list",
+                "/sops/{sop_id}/sections",
+                "/sops/{sop_id}/sections/{section_number}",
+                "/sops/search?q={query}",
+                "/sops/{sop_id}/text"
+            ]
+        }
     }
 
 @app.post("/pcr/annealing-temp", response_model=AnnealingTempResponse)
@@ -289,6 +305,178 @@ async def calculate_oligo_annealing(request: OligoAnnealingRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# ============================================================================
+# SOP ENDPOINTS
+# ============================================================================
+
+@app.get("/sops/list")
+async def list_sops():
+    """
+    List all available SOP files
+
+    Returns list of SOPs with their IDs and filenames
+    """
+    try:
+        sops = sop_parser.list_sops()
+        return {
+            "count": len(sops),
+            "sops": sops
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing SOPs: {str(e)}")
+
+@app.get("/sops/{sop_id}/sections")
+async def get_sop_sections(sop_id: str):
+    """
+    Get all numbered sections from a specific SOP
+
+    Args:
+        sop_id: SOP identifier (filename without extension)
+
+    Returns:
+        List of sections with section_number, title, and preview
+    """
+    try:
+        sections = sop_parser.parse_sections(sop_id)
+
+        if not sections:
+            # Check if SOP exists but has no parseable sections
+            text = sop_parser.extract_text_from_pdf(sop_id)
+            if text:
+                return {
+                    "sop_id": sop_id,
+                    "message": "SOP found but no numbered sections detected",
+                    "sections": [],
+                    "raw_text_available": True
+                }
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"SOP protocol not found: {sop_id}"
+                )
+
+        # Return sections with preview (first 200 chars of content)
+        result_sections = []
+        for section in sections:
+            content_preview = section["content"][:200] + "..." if len(section["content"]) > 200 else section["content"]
+            result_sections.append({
+                "section_number": section["section_number"],
+                "title": section["title"],
+                "full_heading": section["full_heading"],
+                "content_preview": content_preview
+            })
+
+        return {
+            "sop_id": sop_id,
+            "count": len(result_sections),
+            "sections": result_sections
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing SOP: {str(e)}")
+
+@app.get("/sops/{sop_id}/sections/{section_number}")
+async def get_sop_section(sop_id: str, section_number: str):
+    """
+    Get a specific section from an SOP with suggested calculators
+
+    Args:
+        sop_id: SOP identifier
+        section_number: Section number (e.g., "1", "2.1", "3.2.1")
+
+    Returns:
+        Section with full content and suggested calculators
+    """
+    try:
+        section = sop_parser.get_section_with_calculator(sop_id, section_number)
+
+        if not section:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SOP protocol not found: section {section_number} in {sop_id}"
+            )
+
+        return section
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving section: {str(e)}")
+
+@app.get("/sops/search")
+async def search_sops(q: str = Query(..., description="Search query")):
+    """
+    Search for sections across all SOPs
+
+    Args:
+        q: Search query (searches in section titles and content)
+
+    Returns:
+        List of matching sections from all SOPs
+    """
+    try:
+        results = sop_parser.search_sections(q)
+
+        if not results:
+            return {
+                "query": q,
+                "count": 0,
+                "results": [],
+                "message": "SOP protocol not found"
+            }
+
+        # Add content preview to results
+        for result in results:
+            if len(result["content"]) > 300:
+                result["content_preview"] = result["content"][:300] + "..."
+            else:
+                result["content_preview"] = result["content"]
+
+            # Add suggested calculators
+            calculators = sop_parser.map_section_to_calculator(
+                result["title"],
+                result["content"]
+            )
+            result["suggested_calculators"] = calculators
+
+        return {
+            "query": q,
+            "count": len(results),
+            "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching SOPs: {str(e)}")
+
+@app.get("/sops/{sop_id}/text")
+async def get_sop_full_text(sop_id: str):
+    """
+    Get full text content of an SOP (raw extraction)
+
+    Args:
+        sop_id: SOP identifier
+
+    Returns:
+        Full text content of the SOP
+    """
+    try:
+        text = sop_parser.extract_text_from_pdf(sop_id)
+
+        if not text:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SOP protocol not found: {sop_id}"
+            )
+
+        return {
+            "sop_id": sop_id,
+            "text": text,
+            "length": len(text)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error extracting text: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
