@@ -1,0 +1,64 @@
+# 🧬 Bark Mlenner: The AI Lab Manager
+
+**Bark Mlenner** is an automated AI assistant designed to streamline molecular biology lab handovers. It lives inside your Google Docs and Calendar, acting as a virtual Lab Manager that ensures continuity between student shifts.
+
+## ✨ Features
+
+* **🤖 Automated Daily Handovers:** Checks your Lab Calendar for the next scheduled student and writes a customized "Handover" note at 8:00 PM every night.
+* **📚 Protocol Enforcement:** Reads your **Master Protocols** Google Doc to ensure all advice follows your specific lab rules (e.g., specific cloning strains, incubation temps, or buffer recipes).
+* **⚡ Interactive Help:** Students can highlight any text in the notebook and ask Bark Mlenner to explain it or draft a step-by-step protocol instantly via a custom menu.
+* **🧠 Context-Aware Advice:** Combines what was *just done* (Notebook) with how it *should be done* (Protocols) to catch mistakes before they happen.
+
+---
+
+## 🛠️ Prerequisites
+
+Before installing, ensure you have:
+1.  A **Google Account** (Personal or Workspace).
+2.  A **Google Doc** to serve as the Lab Notebook (where students write daily logs).
+3.  A **Google Doc** to serve as the Master Protocols (where your SOPs live).
+4.  A **Google Calendar** for scheduling shifts.
+
+---
+
+## 🚀 Installation & Setup
+
+### Step 1: Create the Documents
+1.  **Lab Notebook:** Create a Google Doc where students will write their daily logs.
+2.  **Master Protocols:** Create a separate Google Doc containing all your lab's Standard Operating Procedures (SOPs).
+    * *Tip: Use clear headings like "PROTOCOL 1: CLONING" so the AI can read it easily.*
+
+### Step 2: Get Your Document ID
+You need to tell the script where to find your protocols.
+1.  Open your **Master Protocols** Google Doc.
+2.  Look at the URL in your browser address bar.
+3.  Copy the long string of random letters and numbers between `/d/` and `/edit`.
+    * *Example URL:* `docs.google.com/document/d/`**`1atFfk3Az...7E1COkwZD4A`**`/edit`
+    * *You need the bold part.*
+
+### Step 3: Get Your API Key
+Bark Mlenner uses Google's Gemini AI. You need a free API key to give him a brain.
+1.  Go to **[Google AI Studio](https://aistudio.google.com/)**.
+2.  Sign in with your Google Account.
+3.  Click on the **"Get API Key"** button (or the key icon on the left sidebar).
+4.  Click **"Create API Key"**.
+5.  **Copy the key** (it starts with `AIza...`).
+    * *⚠️ Security Warning: Keep this key private. Do not share it publicly.*
+
+### Step 4: Install the Script
+1.  Open your **Lab Notebook** Google Doc.
+2.  Go to top menu: **Extensions** > **Apps Script**.
+3.  Delete any existing code in the editor and paste the `Bark Mlenner` script code.
+
+### Step 5: Configure the Variables
+At the top of the script, look for the `CONFIGURATION` section and update these three lines with the data you gathered in Steps 2 & 3:
+
+```javascript
+// 1. Paste the API Key you copied in Step 3 here (keep the quotes!)
+const GEMINI_API_KEY = "AIzaSy..."; 
+
+// 2. Enter the EXACT name of your Lab Calendar
+const CALENDAR_NAME = "Team Timer"; 
+
+// 3. Paste the Protocol Doc ID you copied in Step 2 here
+const PROTOCOL_DOC_ID = "1atFfk3Az...";
